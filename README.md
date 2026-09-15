@@ -38,7 +38,7 @@ node scripts/publish.mjs --dry-run
 
 授权仅在本机临时设置 `GITHUB_TOKEN` 后执行 `node scripts/publish.mjs`，或执行 `node scripts/publish.mjs --token-stdin` 进行隐藏输入。Token 仅需该仓库 Contents 读写权限。不要把 Token 写入源码、`.env`、提交或聊天。
 
-客户端沿用现有 Supabase 公共配置和会话存储。仍使用原用户名登录（内部映射为 `用户名@miaoda.com`），不会自动创建新的匿名身份。可通过 `.env.local` 覆盖公共项目配置；禁止放入 service-role key。
+客户端使用个人 Supabase 项目的公共配置和会话存储。仍使用原用户名登录（内部映射为 `用户名@miaoda.com`），不会自动创建匿名身份。数据库初始化脚本位于 `supabase/schema.sql`；可通过 `.env.local` 覆盖公共项目配置，禁止放入 service-role key。
 
 ## 数据与一致性
 

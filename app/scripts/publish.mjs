@@ -76,7 +76,7 @@ for (const file of sourceFiles) {
     if (e.code !== "ENOENT") throw e;
   }
 }
-for (const dir of ["src", "public", "scripts", "tests", "docs"]) {
+for (const dir of ["src", "public", "scripts", "tests", "docs", "supabase"]) {
   try {
     await walk(path.join(root, dir), `app/${dir}`);
   } catch (e) {

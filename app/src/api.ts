@@ -1,7 +1,7 @@
 import { supabase, url, anon } from "./client";
 import type { Task, Metadata } from "./types";
 const fields =
-  "id,user_id,name,priority,completed,reminder_at,reminder_method,elapsed_seconds,completed_at,created_at,updated_at";
+  "id,user_id,name,priority,completed,reminder_at,reminder_method,elapsed_seconds,completed_at,created_at,sort_order,updated_at";
 export function fail(error: unknown): never {
   const message =
     error && typeof error === "object" && "message" in error
@@ -110,6 +110,26 @@ export const api = {
     if (error) fail(error);
     if (!data) throw new Error("任务不存在，请刷新列表");
     return data as Task;
+  },
+  async reorder(
+    userId: string,
+    rows: Array<{ id: string; sort_order: number }>,
+  ): Promise<Task[]> {
+    if (!rows.length) return [];
+    const saved = await Promise.all(
+      rows.map(async ({ id, sort_order }) => {
+        const { data, error } = await supabase
+          .from("tasks")
+          .update({ sort_order })
+          .eq("id", id)
+          .eq("user_id", userId)
+          .select(fields)
+          .single();
+        if (error) fail(error);
+        return data as Task;
+      }),
+    );
+    return saved;
   },
   async saveElapsed(
     userId: string,

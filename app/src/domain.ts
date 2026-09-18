@@ -64,6 +64,8 @@ export function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort(
     (a, b) =>
       Number(a.completed) - Number(b.completed) ||
+      (a.sort_order == null ? 1 : 0) - (b.sort_order == null ? 1 : 0) ||
+      (a.sort_order ?? 0) - (b.sort_order ?? 0) ||
       (a.completed
         ? Date.parse(b.completed_at || b.created_at) -
           Date.parse(a.completed_at || a.created_at)
@@ -103,6 +105,7 @@ export function carryRow(task: Task, userId: string, now = new Date()): Task {
     elapsed_seconds: 0,
     completed_at: null,
     created_at: now.toISOString(),
+    sort_order: null,
     reminder_at: future ? task.reminder_at : null,
     reminder_method: future ? task.reminder_method : null,
   };
@@ -159,6 +162,7 @@ export function repeatRow(
     elapsed_seconds: 0,
     completed_at: null,
     created_at: now.toISOString(),
+    sort_order: null,
     reminder_at: at,
     reminder_method: at ? rule.reminderMethod : null,
   };

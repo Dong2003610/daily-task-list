@@ -14,9 +14,12 @@ create table if not exists public.tasks (
   elapsed_seconds integer not null default 0 check (elapsed_seconds >= 0),
   completed_at timestamptz,
   created_at timestamptz not null default now(),
+  sort_order bigint,
   updated_at timestamptz not null default now(),
   check ((reminder_at is null) = (reminder_method is null))
 );
+
+alter table public.tasks add column if not exists sort_order bigint;
 
 create index if not exists tasks_user_id_id_idx on public.tasks (user_id, id);
 create index if not exists tasks_user_id_created_at_idx

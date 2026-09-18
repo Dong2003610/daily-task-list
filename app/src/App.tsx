@@ -1,5 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Plus,
   Search,
@@ -22,6 +39,7 @@ import {
   CheckCheck,
   ListTodo,
   Clock3,
+  GripVertical,
 } from "lucide-react";
 import { supabase } from "./client";
 import { useWorkspace } from "./useWorkspace";
@@ -47,10 +65,59 @@ import {
 import { readLocal } from "./storage";
 import type { Task, Priority, TimerMode } from "./types";
 
+function SortableTaskCard({
+  task,
+  enabled,
+  className,
+  children,
+}: {
+  task: Task;
+  enabled: boolean;
+  className: string;
+  children: ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id, disabled: !enabled });
+  return (
+    <article
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`${className} ${isDragging ? "is-dragging" : ""}`}
+      data-testid="task-card"
+    >
+      {enabled && (
+        <button
+          type="button"
+          className="drag-handle"
+          aria-label={`拖动排序：${task.name}`}
+          title="拖动调整顺序"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={17} />
+        </button>
+      )}
+      {children}
+    </article>
+  );
+}
+
 export function App({ user }: { user: User }) {
   const workspace = useWorkspace(user),
     timer = useFocusTimer(user.id, workspace.tasks, workspace.saveElapsed),
     reminders = useReminders(user.id, workspace.tasks);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
   const [day, setDay] = useState(dayKey),
     [view, setView] = useState<"today" | "history">("today"),
     [search, setSearch] = useState(""),
@@ -225,6 +292,27 @@ export function App({ user }: { user: User }) {
     }
     return Object.entries(result).sort(([a], [b]) => b.localeCompare(a));
   }, [visible]);
+  const reorderEnabled =
+    view === "today" &&
+    filter === "all" &&
+    !search.trim() &&
+    workspace.pending === 0;
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id || !reorderEnabled) return;
+    const current = visible.filter((task) => !task.completed);
+    const oldIndex = current.findIndex((task) => task.id === active.id);
+    const newIndex = current.findIndex((task) => task.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const reordered = arrayMove(current, oldIndex, newIndex);
+    void act(
+      () =>
+        workspace.reorder(
+          reordered.map((task) => task.id),
+          day,
+        ),
+      "任务顺序已保存",
+    );
+  };
   const syncText = !workspace.online
     ? "网络已断开"
     : workspace.pending
@@ -557,6 +645,12 @@ export function App({ user }: { user: User }) {
               </label>
             )}
           </div>
+          {view === "today" && !search.trim() && filter === "all" && (
+            <p className="sort-hint">
+              <GripVertical size={14} />{" "}
+              拖动未完成任务可调整顺序；首次使用时仍默认高优先级在前
+            </p>
+          )}
           {workspace.loading ? (
             <div className="empty-state panel">
               <RefreshCw className="spin" />
@@ -591,108 +685,124 @@ export function App({ user }: { user: User }) {
               )}
             </div>
           ) : (
-            <div className="task-groups">
-              {groups.map(([group, tasks]) => (
-                <section key={group}>
-                  {view === "history" && (
-                    <h3 className="group-heading">
-                      {dayLabel(group, day)} <small>{tasks.length} 项</small>
-                    </h3>
-                  )}
-                  <div className="task-list">
-                    {tasks.map((task) => (
-                      <article
-                        key={task.id}
-                        className={`task-card panel ${task.completed ? "completed" : ""} ${timer.taskId === task.id ? "is-timing" : ""}`}
-                        data-testid="task-card"
-                      >
-                        <button
-                          className={`complete-button ${task.completed ? "checked" : ""}`}
-                          disabled={busy}
-                          aria-label={`${task.completed ? "标记未完成" : "完成"}：${task.name}`}
-                          aria-pressed={task.completed}
-                          onClick={() =>
-                            void act(() => workspace.toggle(task.id))
-                          }
-                        >
-                          {task.completed && <Check size={17} />}
-                        </button>
-                        <div className="task-content">
-                          <div className="task-title">
-                            <h3>{task.name}</h3>
-                            <span className={`priority ${task.priority}`}>
-                              {PRIORITY[task.priority]}
-                            </span>
-                          </div>
-                          <div className="task-meta">
-                            {task.reminder_at && (
-                              <span>
-                                <Bell size={12} />
-                                {new Date(task.reminder_at).toLocaleString(
-                                  "zh-CN",
-                                  {
-                                    timeZone: TIMEZONE,
-                                    month: "2-digit",
-                                    day: "2-digit",
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  },
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <div className="task-groups">
+                {groups.map(([group, tasks]) => (
+                  <section key={group}>
+                    {view === "history" && (
+                      <h3 className="group-heading">
+                        {dayLabel(group, day)} <small>{tasks.length} 项</small>
+                      </h3>
+                    )}
+                    <SortableContext
+                      items={tasks
+                        .filter((task) => !task.completed)
+                        .map((task) => task.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="task-list">
+                        {tasks.map((task) => (
+                          <SortableTaskCard
+                            key={task.id}
+                            task={task}
+                            enabled={reorderEnabled && !task.completed}
+                            className={`task-card panel ${task.completed ? "completed" : ""} ${timer.taskId === task.id ? "is-timing" : ""}`}
+                          >
+                            <button
+                              className={`complete-button ${task.completed ? "checked" : ""}`}
+                              disabled={busy}
+                              aria-label={`${task.completed ? "标记未完成" : "完成"}：${task.name}`}
+                              aria-pressed={task.completed}
+                              onClick={() =>
+                                void act(() => workspace.toggle(task.id))
+                              }
+                            >
+                              {task.completed && <Check size={17} />}
+                            </button>
+                            <div className="task-content">
+                              <div className="task-title">
+                                <h3>{task.name}</h3>
+                                <span className={`priority ${task.priority}`}>
+                                  {PRIORITY[task.priority]}
+                                </span>
+                              </div>
+                              <div className="task-meta">
+                                {task.reminder_at && (
+                                  <span>
+                                    <Bell size={12} />
+                                    {new Date(task.reminder_at).toLocaleString(
+                                      "zh-CN",
+                                      {
+                                        timeZone: TIMEZONE,
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      },
+                                    )}
+                                  </span>
                                 )}
-                              </span>
-                            )}
-                            {task.elapsed_seconds > 0 && (
-                              <span>
-                                <Clock3 size={12} />
-                                已用 {formatDuration(task.elapsed_seconds)}
-                              </span>
-                            )}
-                            {timer.taskId === task.id && (
-                              <span className="timing-label">
-                                {timer.running ? "正在专注" : "计时已暂停"}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="task-actions">
-                          <button
-                            className="icon-button"
-                            disabled={task.completed}
-                            aria-label={`计时：${task.name}`}
-                            onClick={() => {
-                              setTimerExpanded(true);
-                              if (timer.taskId === task.id) {
-                                timer.running ? timer.pause() : timer.resume();
-                              } else timer.start(task, timerMode, minutes);
-                            }}
-                          >
-                            <Timer size={17} />
-                          </button>
-                          <button
-                            className="icon-button"
-                            aria-label={`编辑：${task.name}`}
-                            disabled={busy}
-                            onClick={() => setEditor(task)}
-                          >
-                            <Pencil size={16} />
-                          </button>
-                          <button
-                            className="icon-button danger"
-                            aria-label={`删除：${task.name}`}
-                            disabled={busy}
-                            onClick={() => {
-                              if (timer.taskId === task.id) timer.pause();
-                              workspace.scheduleDelete(task);
-                            }}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
+                                {task.elapsed_seconds > 0 && (
+                                  <span>
+                                    <Clock3 size={12} />
+                                    已用 {formatDuration(task.elapsed_seconds)}
+                                  </span>
+                                )}
+                                {timer.taskId === task.id && (
+                                  <span className="timing-label">
+                                    {timer.running ? "正在专注" : "计时已暂停"}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="task-actions">
+                              <button
+                                className="icon-button"
+                                disabled={task.completed}
+                                aria-label={`计时：${task.name}`}
+                                onClick={() => {
+                                  setTimerExpanded(true);
+                                  if (timer.taskId === task.id) {
+                                    timer.running
+                                      ? timer.pause()
+                                      : timer.resume();
+                                  } else timer.start(task, timerMode, minutes);
+                                }}
+                              >
+                                <Timer size={17} />
+                              </button>
+                              <button
+                                className="icon-button"
+                                aria-label={`编辑：${task.name}`}
+                                disabled={busy}
+                                onClick={() => setEditor(task)}
+                              >
+                                <Pencil size={16} />
+                              </button>
+                              <button
+                                className="icon-button danger"
+                                aria-label={`删除：${task.name}`}
+                                disabled={busy}
+                                onClick={() => {
+                                  if (timer.taskId === task.id) timer.pause();
+                                  workspace.scheduleDelete(task);
+                                }}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </SortableTaskCard>
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </section>
+                ))}
+              </div>
+            </DndContext>
           )}
         </section>
         <aside

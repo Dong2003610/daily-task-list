@@ -11,6 +11,7 @@ export interface Task {
   elapsed_seconds: number;
   completed_at: string | null;
   created_at: string;
+  sort_order?: number | null;
   updated_at?: string;
 }
 export interface TaskInput {

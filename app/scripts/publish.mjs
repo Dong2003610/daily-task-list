@@ -159,8 +159,7 @@ const tree = await request("git/trees", "POST", {
   tree: changes,
 });
 const commit = await request("git/commits", "POST", {
-  message:
-    "feat: reliable task carryover, recurring schedules, quick entry and backups",
+  message: "feat: add persistent drag-and-drop task ordering",
   tree: tree.sha,
   parents: [head],
 });

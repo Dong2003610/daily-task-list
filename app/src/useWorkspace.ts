@@ -165,6 +165,18 @@ export function useWorkspace(user: User) {
           completed_at: null,
           elapsed_seconds: 0,
           created_at: new Date().toISOString(),
+          sort_order: (() => {
+            const today = dayKey();
+            const ordered = state.current.tasks.filter(
+              (task) =>
+                !task.completed &&
+                dayKey(task.created_at) === today &&
+                task.sort_order != null,
+            );
+            return ordered.length
+              ? Math.max(...ordered.map((task) => task.sort_order!)) + 1000
+              : null;
+          })(),
         };
         draftRows.current[signature] = row;
         writeLocal(addKey, draftRows.current);
@@ -209,6 +221,45 @@ export function useWorkspace(user: User) {
         mergeTasks([saved]);
       }),
     [userId, transact],
+  );
+  const reorder = useCallback(
+    (ids: string[], expectedDay: string) => {
+      const previous = state.current.tasks;
+      const wanted = new Set(ids);
+      if (
+        dayKey() !== expectedDay ||
+        ids.some((id) => {
+          const task = previous.find((item) => item.id === id);
+          return (
+            !task || task.completed || dayKey(task.created_at) !== expectedDay
+          );
+        })
+      )
+        return Promise.reject(new Error("任务列表已变化，请刷新后重新排序"));
+      const order = new Map(ids.map((id, index) => [id, (index + 1) * 1000]));
+      const optimistic = previous.map((task) =>
+        wanted.has(task.id)
+          ? { ...task, sort_order: order.get(task.id)! }
+          : task,
+      );
+      state.current.tasks = optimistic;
+      setTasks(sortTasks(optimistic));
+      return transact(async () => {
+        try {
+          await api.reorder(
+            userId,
+            ids.map((id) => ({ id, sort_order: order.get(id)! })),
+          );
+          const rows = await api.list(userId);
+          setTasks(sortTasks(rows));
+        } catch (error) {
+          const rows = await api.list(userId).catch(() => previous);
+          setTasks(sortTasks(rows));
+          throw error;
+        }
+      });
+    },
+    [transact, userId],
   );
   const dismissCarry = useCallback(
     () =>
@@ -445,6 +496,7 @@ export function useWorkspace(user: User) {
     update,
     toggle,
     saveElapsed,
+    reorder,
     carry,
     dismissCarry,
     saveRule,

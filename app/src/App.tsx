@@ -47,6 +47,8 @@ import { useFocusTimer } from "./useFocusTimer";
 import { useReminders } from "./useReminders";
 import { TaskEditor } from "./TaskEditor";
 import { RepeatPanel } from "./RepeatPanel";
+import { WeeklyPanel } from "./WeeklyPanel";
+import { weeklyApi } from "./weeklyApi";
 import { Modal } from "./Modal";
 import {
   carryCandidates,
@@ -131,6 +133,8 @@ export function App({ user }: { user: User }) {
     [repeatOpen, setRepeatOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [carryOpen, setCarryOpen] = useState<"yesterday" | "all" | null>(null);
+  const [weeklyEditing, setWeeklyEditing] = useState(false);
+  const [weeklyBusy, setWeeklyBusy] = useState(false), [weeklyRefresh, setWeeklyRefresh] = useState(0);
   const [notice, setNotice] = useState(""),
     [actionError, setActionError] = useState(""),
     [timerExpanded, setTimerExpanded] = useState(false),
@@ -237,6 +241,7 @@ export function App({ user }: { user: User }) {
       asked.current === day ||
       editor !== undefined ||
       repeatOpen ||
+      weeklyEditing ||
       exportOpen ||
       reminder
     )
@@ -258,6 +263,7 @@ export function App({ user }: { user: User }) {
     user.id,
     editor,
     repeatOpen,
+    weeklyEditing,
     exportOpen,
     reminder,
   ]);
@@ -315,7 +321,7 @@ export function App({ user }: { user: User }) {
   };
   const syncText = !workspace.online
     ? "网络已断开"
-    : workspace.pending
+    : workspace.pending || weeklyBusy
       ? "正在保存…"
       : workspace.error
         ? "同步失败"
@@ -324,18 +330,19 @@ export function App({ user }: { user: User }) {
           : workspace.deletions.length
             ? "等待删除确认…"
             : "已同步";
-  const busy = workspace.pending > 0;
-  const download = (format: "json" | "csv") => {
+  const busy = workspace.pending > 0 || weeklyBusy;
+  const download = async (format: "json" | "csv") => {
     const data =
       format === "csv"
         ? exportCsv(workspace.allTasks)
         : JSON.stringify(
             {
               format: "daily-task-list",
-              version: 2,
+              version: 3,
               exportedAt: new Date().toISOString(),
               timezone: TIMEZONE,
               tasks: workspace.allTasks,
+              weeklyTasks: await weeklyApi.list(user.id),
               settings: Object.fromEntries(
                 Object.entries(workspace.metadata).filter(([k]) =>
                   k.startsWith("dtl_"),
@@ -391,7 +398,7 @@ export function App({ user }: { user: User }) {
             className="icon-button"
             aria-label="刷新同步"
             disabled={busy}
-            onClick={() => void workspace.refresh()}
+            onClick={() => { void workspace.refresh(); setWeeklyRefresh((n) => n + 1); }}
           >
             <RefreshCw size={17} />
           </button>
@@ -425,6 +432,7 @@ export function App({ user }: { user: User }) {
               setActionError("");
               timer.clearError();
               void workspace.refresh();
+              setWeeklyRefresh((n) => n + 1);
               setRetryTick((n) => n + 1);
             }}
           >
@@ -805,6 +813,22 @@ export function App({ user }: { user: User }) {
             </DndContext>
           )}
         </section>
+        <div className="workspace-sidebar">
+          <WeeklyPanel
+            userId={user.id}
+            day={day}
+            dailyTasks={workspace.allTasks}
+            dailyBusy={workspace.pending > 0}
+            dailyReady={workspace.ready}
+            refreshTick={weeklyRefresh}
+            onBusy={setWeeklyBusy}
+            onSchedule={async (task, expectedDay) => {
+              await workspace.scheduleWeekly(task, expectedDay);
+              setView("today"); setSearch(""); setFilter("all");
+            }}
+            onNotice={setNotice}
+            onEditing={setWeeklyEditing}
+          />
         <aside
           className={`timer-panel panel ${timerExpanded ? "expanded" : ""} ${timer.task ? "has-task" : ""}`}
         >
@@ -913,6 +937,7 @@ export function App({ user }: { user: User }) {
             </p>
           </div>
         </aside>
+        </div>
       </div>
       <footer className="page-footer">
         每完成一件小事，都在向前一步。
@@ -981,21 +1006,21 @@ export function App({ user }: { user: User }) {
       {exportOpen && (
         <Modal title="导出任务备份" onClose={() => setExportOpen(false)}>
           <p className="muted">
-            包含账号下的全部任务，不受当前搜索和日期筛选影响。待撤销的删除项也会保留在备份中。
+            CSV 导出全部每日任务；JSON 完整备份还包含所有周计划。不受当前搜索和日期筛选影响，待撤销的每日删除项也会保留。
           </p>
           <div className="export-options">
-            <button className="button" onClick={() => download("csv")}>
+            <button className="button" onClick={() => void act(() => download("csv"))}>
               <Download size={18} />
               导出 CSV 表格
             </button>
-            <button className="button primary" onClick={() => download("json")}>
+            <button className="button primary" onClick={() => void act(() => download("json"))}>
               <Download size={18} />
               导出 JSON 完整备份
             </button>
           </div>
           <p className="muted small">
             CSV 方便用表格软件查看；JSON
-            额外包含重复任务规则与设置，不包含登录凭据。
+            额外包含全部周计划、重复任务规则与设置，不包含登录凭据。
           </p>
         </Modal>
       )}
@@ -1025,6 +1050,7 @@ export function App({ user }: { user: User }) {
         />
       )}
       {reminder &&
+        !weeklyEditing &&
         !carryOpen &&
         editor === undefined &&
         !repeatOpen &&

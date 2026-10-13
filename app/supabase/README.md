@@ -13,3 +13,7 @@ VITE_SUPABASE_ANON_KEY=你的匿名公开密钥
 ```
 
 旧秒哒后端已暂停时，无法由本项目自动读取旧任务。若之后能临时恢复，可先在旧网站使用 JSON 导出备份；目前新库会从空任务列表开始。
+
+## 已有项目启用周计划
+
+在 SQL Editor 完整运行 `migrations/20261013_add_weekly_tasks.sql`。结果应为 `Success. No rows returned`。该脚本只创建每周计划表及本人访问策略，不修改已有每日任务。运行后刷新网站即可新增周任务。

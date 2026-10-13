@@ -1469,3 +1469,62 @@ dialog p {
     transition: none !important;
   }
 }
+
+/* Weekly goals remain visible alongside the daily execution list. */
+.main-grid { grid-template-columns: minmax(0, 1fr) 310px; }
+.workspace-sidebar { position: sticky; top: 20px; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
+.weekly-panel { padding: 20px; }
+.weekly-summary { display: flex; align-items: center; width: 100%; gap: 10px; background: none; border: 0; padding: 0; text-align: left; }
+.weekly-summary > span:nth-child(2) { flex: 1; min-width: 0; }
+.weekly-summary strong { display: block; font-size: 15px; font-weight: 600; }
+.weekly-summary small { display: block; font-size: 10px; margin-top: 6px; color: var(--muted); }
+.weekly-icon { width: 37px; height: 37px; border-radius: 12px; background: #e5e2f4; color: #8173bd; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.weekly-chevron { transition: transform .2s; color: var(--muted); }
+.weekly-chevron.open { transform: rotate(180deg); }
+.weekly-progress-line { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 17px 0 9px; }
+.weekly-progress-line strong { color: var(--blue); font-variant-numeric: tabular-nums; }
+.weekly-navigation { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 5px; }
+.weekly-navigation .text-button { font-size: 11px; }
+.weekly-list { list-style: none; margin: 0 0 12px; padding: 0; max-height: 31dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.weekly-task { display: flex; align-items: flex-start; gap: 10px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.weekly-task .complete-button { width: 22px; height: 22px; margin-top: 1px; flex-shrink: 0; }
+.weekly-task-content { flex: 1; min-width: 0; }
+.weekly-task-title { display: flex; align-items: flex-start; gap: 8px; }
+.weekly-task h3 { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; }
+.weekly-task.completed h3 { text-decoration: line-through; color: var(--muted); }
+.weekly-task.completed .complete-button { background: #77928d; border-color: #77928d; color: white; }
+.weekly-task-actions { display: flex; align-items: center; gap: 3px; margin-top: 7px; }
+.weekly-task-actions .icon-button { width: 28px; height: 28px; }
+.weekly-task-actions .icon-button:first-of-type { margin-left: auto; }
+.weekly-schedule { font-size: 10px; padding: 4px 0; margin-right: auto; }
+.weekly-add { width: 100%; font-size: 12px; min-height: 37px; background: #e5eaf6; color: var(--blue); }
+.weekly-hint { margin: 12px 0 0; font-size: 9px; color: var(--muted); line-height: 1.8; text-align: center; }
+.weekly-empty { text-align: center; padding: 20px 0 22px; color: #8d9bb3; }
+.weekly-empty h3 { font-size: 12px; font-weight: 500; color: #63718b; margin-top: 12px; }
+.weekly-empty p { font-size: 10px; line-height: 1.8; margin-top: 7px; }
+.weekly-error { margin: 10px 0; font-size: 11px; }
+.weekly-error span { display: block; }
+.weekly-mobile-dock { display: none; }
+@media (min-width: 761px) { .workspace-sidebar .timer-panel { position: static; } }
+@media (min-width: 761px) and (max-height: 850px) {
+  .workspace-sidebar { max-height: calc(100dvh - 40px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 2px 5px 16px; }
+  .workspace-sidebar .timer-display { padding: 18px 0; }
+}
+@media (min-width: 761px) and (max-width: 960px) {
+  .main-grid { grid-template-columns: minmax(0, 1fr) 280px; }
+  .weekly-panel { padding: 17px; }
+}
+@media (max-width: 760px) {
+  .workspace-sidebar { display: contents; }
+  .weekly-mobile-dock { display: flex; align-items: center; gap: 9px; position: fixed; top: 0; left: 0; right: 0; z-index: 350; width: 100%; min-height: 49px; padding: 11px 17px; background: #f1f4fcf5; color: var(--blue); border: 0; border-bottom: 1px solid var(--line); box-shadow: 0 3px 15px #2d374d14; backdrop-filter: blur(12px); }
+  .weekly-mobile-dock strong { font-size: 12px; }
+  .weekly-mobile-dock span { flex: 1; text-align: right; font-size: 11px; color: var(--muted); }
+  .weekly-panel { order: -1; width: 100%; padding: 16px; }
+  .weekly-list { max-height: 260px; }
+  .weekly-summary small { font-size: 11px; }
+  .weekly-task h3 { font-size: 13px; }
+  .weekly-task-actions .icon-button { width: 36px; height: 36px; }
+  .weekly-schedule { font-size: 11px; min-height: 36px; }
+  .weekly-progress-line { margin-top: 13px; }
+  .weekly-hint { font-size: 10px; }
+}

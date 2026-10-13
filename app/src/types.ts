@@ -33,6 +33,18 @@ export interface RepeatRule {
   deleted?: boolean;
 }
 export type Metadata = Record<string, unknown>;
+export interface WeeklyTask {
+  id: string;
+  user_id: string;
+  week_start: string;
+  name: string;
+  priority: Priority;
+  completed: boolean;
+  completed_at: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+export type WeeklyTaskInput = Pick<WeeklyTask, "name" | "priority">;
 export interface PendingDelete {
   task: Task;
   deadline: number;

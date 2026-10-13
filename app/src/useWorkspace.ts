@@ -21,12 +21,14 @@ import {
   validInput,
 } from "./domain";
 import { readLocal, writeLocal } from "./storage";
+import { weeklyDailyRow } from "./weekly";
 import type {
   Task,
   TaskInput,
   Metadata,
   RepeatRule,
   PendingDelete,
+  WeeklyTask,
 } from "./types";
 
 export function useWorkspace(user: User) {
@@ -196,6 +198,17 @@ export function useWorkspace(user: User) {
         mergeTasks([saved]);
       }),
     [userId, transact],
+  );
+  const scheduleWeekly = useCallback(
+    (task: WeeklyTask, expectedDay: string) => transact(async () => {
+      const now = new Date();
+      if (dayKey(now) !== expectedDay) throw new Error("日期已变化，请重新安排到今天");
+      const row = weeklyDailyRow(task, userId, now);
+      const ordered = state.current.tasks.filter((item) => !item.completed && dayKey(item.created_at) === expectedDay && item.sort_order != null);
+      row.sort_order = ordered.length ? Math.max(...ordered.map((item) => item.sort_order!)) + 1000 : null;
+      await api.insertOnce([row]);
+      mergeTasks([await api.get(userId, row.id)]);
+    }), [userId, transact],
   );
   const toggle = useCallback(
     (id: string) =>
@@ -493,6 +506,7 @@ export function useWorkspace(user: User) {
     deletions,
     refresh,
     add,
+    scheduleWeekly,
     update,
     toggle,
     saveElapsed,

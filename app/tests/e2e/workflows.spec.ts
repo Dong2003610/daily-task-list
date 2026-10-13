@@ -510,7 +510,7 @@ test("JSON/CSV downloads include all tasks and JSON settings, excluding session 
   const backup = JSON.parse(json.contents);
   expect(backup).toMatchObject({
     format: "daily-task-list",
-    version: 2,
+    version: 3,
     timezone: "Asia/Shanghai",
   });
   expect(backup.tasks).toEqual(expect.arrayContaining(seedTasks()));

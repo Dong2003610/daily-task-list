@@ -1,6 +1,6 @@
 -- 每日任务清单：Supabase 数据库初始化脚本
 -- 在 Supabase Dashboard → SQL Editor → New query 中完整执行一次。
--- 此脚本只会新建 tasks 表；不会读取或修改秒哒原数据库。
+-- 此脚本新建每日任务及周计划表；不会读取或修改秒哒原数据库。
 
 create table if not exists public.tasks (
   id uuid primary key,
@@ -63,3 +63,34 @@ drop trigger if exists tasks_set_updated_at on public.tasks;
 create trigger tasks_set_updated_at
 before update on public.tasks
 for each row execute function public.set_tasks_updated_at();
+
+-- 每周总计划，与每日执行清单独立。
+create table if not exists public.weekly_tasks (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  week_start date not null check (extract(isodow from week_start) = 1),
+  name text not null check (char_length(btrim(name)) between 1 and 500),
+  priority text not null default 'medium' check (priority in ('high', 'medium', 'low')),
+  completed boolean not null default false,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists weekly_tasks_user_week_id_idx on public.weekly_tasks(user_id, week_start, id);
+alter table public.weekly_tasks enable row level security;
+revoke all on public.weekly_tasks from anon;
+grant select, insert, update, delete on public.weekly_tasks to authenticated;
+drop policy if exists weekly_tasks_owner on public.weekly_tasks;
+create policy weekly_tasks_owner on public.weekly_tasks for all to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+create or replace function public.set_weekly_tasks_updated_at()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+drop trigger if exists weekly_tasks_updated_at on public.weekly_tasks;
+create trigger weekly_tasks_updated_at before update on public.weekly_tasks
+for each row execute function public.set_weekly_tasks_updated_at();

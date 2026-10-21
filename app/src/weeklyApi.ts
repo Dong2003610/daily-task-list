@@ -1,5 +1,6 @@
 import { supabase } from "./client";
 import type { WeeklyTask, WeeklyTaskInput } from "./types";
+import { syncRows, type RowVersion } from "./sync";
 
 const fields = "id,user_id,week_start,name,priority,completed,completed_at,created_at,updated_at";
 function check(error: { code?: string; message: string } | null) {
@@ -9,6 +10,25 @@ function check(error: { code?: string; message: string } | null) {
   throw new Error(error.message);
 }
 export const weeklyApi = {
+  async sync(userId: string, week: string, previous: WeeklyTask[]): Promise<WeeklyTask[]> {
+    return syncRows(previous, async () => {
+      const versions: RowVersion[] = [];
+      let cursor = "";
+      for (;;) {
+        let query = supabase.from("weekly_tasks").select("id,updated_at").eq("user_id", userId).eq("week_start", week).order("id").limit(500);
+        if (cursor) query = query.gt("id", cursor);
+        const { data, error } = await query;
+        check(error);
+        versions.push(...(data || []));
+        if (!data || data.length < 500) return versions;
+        cursor = data[data.length - 1].id;
+      }
+    }, async (ids) => {
+      const { data, error } = await supabase.from("weekly_tasks").select(fields).eq("user_id", userId).eq("week_start", week).in("id", ids);
+      check(error);
+      return (data || []) as WeeklyTask[];
+    });
+  },
   async list(userId: string, week?: string): Promise<WeeklyTask[]> {
     const rows: WeeklyTask[] = [];
     let cursor = "";

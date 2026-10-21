@@ -29,13 +29,14 @@ test("today tasks default to priority order and keyboard dragging persists a cus
     "今日 Alpha 计划",
     "最低优先任务",
   ]);
+  const readsBeforeReorder = backend.taskRequests("GET").length;
 
   const handle = page.getByRole("button", { name: "拖动排序：最高优先任务" });
   await handle.focus();
-  await handle.press("Space");
-  await handle.press("ArrowDown");
-  await handle.press("ArrowDown");
-  await handle.press("Space");
+  await handle.press("Space", {delay: 80});
+  await expect(handle).toHaveAttribute("aria-pressed", "true");
+  await handle.press("ArrowDown", {delay: 80});
+  await handle.press("Space", {delay: 80});
   await expect
     .poll(async () => (await names()).slice(0, 3))
     .toEqual(["今日 Alpha 计划", "最高优先任务", "最低优先任务"]);
@@ -43,6 +44,7 @@ test("today tasks default to priority order and keyboard dragging persists a cus
   expect(backend.tasks.find((t) => t.name === "最高优先任务")?.sort_order).toBe(
     2000,
   );
+  expect(backend.taskRequests("GET")).toHaveLength(readsBeforeReorder);
 
   await page.reload();
   await expect
@@ -136,6 +138,7 @@ test("selected carry preserves history, resets elapsed, and a stale tab replay c
   const stale = await context.newPage();
   await openApp(stale);
   for (const tab of [page, stale]) {
+    await tab.bringToFront();
     await tab.getByRole("button", { name: /项未完成任务等待继续/ }).click();
     const picker = tab.getByRole("dialog", { name: "把未完成的事，接到今天" });
     await picker
@@ -145,6 +148,7 @@ test("selected carry preserves history, resets elapsed, and a stale tab replay c
       picker.getByRole("checkbox", { name: new RegExp(older.name) }),
     ).not.toBeChecked();
   }
+  await page.bringToFront();
   await page
     .getByRole("button", { name: "迁移 1 项到今天", exact: true })
     .click();
@@ -169,10 +173,12 @@ test("selected carry preserves history, resets elapsed, and a stale tab replay c
   const childBeforeReplay = structuredClone(
     backend.tasks.find((t) => t.id === childId),
   );
+  await stale.bringToFront();
   await stale
     .getByRole("button", { name: "迁移 1 项到今天", exact: true })
     .click();
   await expect(stale.getByRole("dialog")).toHaveCount(0);
+  await page.bringToFront();
   await page.reload();
   await expect(card(page, prior.name)).toBeVisible();
   expect(backend.tasks.filter((t) => t.id === childId)).toEqual([
@@ -513,7 +519,7 @@ test("JSON/CSV downloads include all tasks and JSON settings, excluding session 
     version: 3,
     timezone: "Asia/Shanghai",
   });
-  expect(backup.tasks).toEqual(expect.arrayContaining(seedTasks()));
+  expect(backup.tasks).toEqual(expect.arrayContaining(seedTasks().map(row => expect.objectContaining({...row}))));
   expect(backup.tasks).toHaveLength(backend.tasks.length);
   expect(backup.settings).toEqual({
     dtl_carry_prompt_v2: TODAY,

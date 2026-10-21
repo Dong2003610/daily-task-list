@@ -12,7 +12,7 @@ type Failure = {method: string; suffix: string; message: string; status: number}
 
 /** A per-test database shared by that test's tabs; no network-backed client. */
 export class MockBackend {
-  tasks = seedTasks();
+  tasks: Task[] = seedTasks().map(row => ({...row, updated_at: row.updated_at ?? row.created_at}));
   weeklyTasks: WeeklyTask[] = [];
   loseNextWeeklyInsertResponse = false;
   metadata: Metadata = {dtl_carry_prompt_v2: TODAY, profile_label: 'unchanged account setting'};
@@ -25,6 +25,8 @@ export class MockBackend {
   loseNextTaskInsertResponse = false;
   loseNextTaskDeleteResponse = false;
   private failures: Failure[] = [];
+  private revision = 0;
+  private timestamp() { return new Date(new Date(NOW).getTime() + ++this.revision).toISOString(); }
 
   failNext(method: string, suffix: string, message = '测试保存失败，请重试', status = 503) {
     this.failures.push({method, suffix, message, status});
@@ -49,6 +51,10 @@ export class MockBackend {
     }
     this.requests.push({method, path: url.pathname, query: url.search, body});
     const json = (data: unknown, status = 200, headers: Record<string, string> = {}) => route.fulfill({status, contentType: 'application/json', headers, body: JSON.stringify(data)});
+    const project = (row: Task | WeeklyTask) => {
+      const select = url.searchParams.get('select');
+      return !select || select === '*' ? row : Object.fromEntries(select.split(',').map(key => [key, row[key as keyof typeof row]]));
+    };
     const error = (message: string, status = 503) => json({code: 'TEST_BACKEND_ERROR', message, details: null, hint: null}, status);
     if (method === 'OPTIONS') return route.fulfill({status: 204, headers: {'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,PUT,POST,PATCH,DELETE,OPTIONS'}});
     const failed = this.failures.findIndex(f => f.method === method && url.pathname.endsWith(f.suffix));
@@ -62,14 +68,16 @@ export class MockBackend {
       return json(this.user());
     }
     if (url.pathname.endsWith('/rest/v1/weekly_tasks')) {
+      for (const row of this.weeklyTasks) row.updated_at ??= row.created_at;
       const matches = (row: WeeklyTask) => [...url.searchParams].every(([field, filter]) => {
         const [operator, ...value] = filter.split('.');
         const actual = String(row[field as keyof WeeklyTask]);
+        if (operator === 'in') return value.join('.').slice(1, -1).split(',').map(item => item.replace(/^"|"$/g, '')).includes(actual);
         return operator === 'eq' ? actual === value.join('.') : operator === 'gt' ? actual > value.join('.') : true;
       });
       if (method === 'GET') {
         const rows = this.weeklyTasks.filter(matches).sort((a,b) => a.id.localeCompare(b.id)).slice(0, Number(url.searchParams.get('limit') || 500));
-        return request.headers().accept?.includes('application/vnd.pgrst.object+json') ? json(rows[0]) : json(rows);
+        return request.headers().accept?.includes('application/vnd.pgrst.object+json') ? json(rows[0] && project(rows[0])) : json(rows.map(project));
       }
       if (method === 'POST') {
         const rows = (Array.isArray(body) ? body : [body]) as WeeklyTask[];
@@ -81,7 +89,7 @@ export class MockBackend {
       if (method === 'PATCH' || method === 'DELETE') {
         if (!url.searchParams.has('id') || url.searchParams.get('user_id') !== `eq.${USER_ID}`) { this.unexpected.push('Unscoped weekly mutation'); return error('Invalid owner', 403); }
         const rows = this.weeklyTasks.filter(matches);
-        if (method === 'PATCH') { rows.forEach(row => Object.assign(row, structuredClone(body))); return json(rows[0]); }
+        if (method === 'PATCH') { rows.forEach(row => Object.assign(row, structuredClone(body), {updated_at: this.timestamp()})); return json(rows[0]); }
         this.weeklyTasks = this.weeklyTasks.filter(row => !matches(row));
         return route.fulfill({status: 204});
       }
@@ -91,6 +99,7 @@ export class MockBackend {
       return error('Unmocked endpoint blocked; no external request was sent');
     }
 
+    for (const row of this.tasks) row.updated_at ??= row.created_at;
     const matches = (row: Task) => [...url.searchParams].every(([field, filter]) => {
       const separator = filter.indexOf('.');
       const operator = filter.slice(0, separator), operand = filter.slice(separator + 1);
@@ -127,8 +136,8 @@ export class MockBackend {
       const limit = Number(url.searchParams.get('limit') ?? (range ? Number(range[2]) - offset + 1 : rows.length));
       const total = rows.length;
       rows = rows.slice(offset, offset + limit);
-      if (single) return result(rows);
-      return json(rows, 200, {'content-range': rows.length ? `${offset}-${offset + rows.length - 1}/${total}` : `*/${total}`});
+      if (single) return rows.length === 1 ? json(project(rows[0])) : error('Expected exactly one task', 406);
+      return json(rows.map(project), 200, {'content-range': rows.length ? `${offset}-${offset + rows.length - 1}/${total}` : `*/${total}`});
     }
     if (method === 'POST') {
       const rows = (Array.isArray(body) ? body : [body]) as Task[];
@@ -143,7 +152,7 @@ export class MockBackend {
       const inserted: Task[] = [];
       for (const row of rows) {
         if (this.tasks.some(existing => existing.id === row.id)) continue;
-        const saved = structuredClone(row);
+        const saved = {...structuredClone(row), updated_at: this.timestamp()};
         this.tasks.push(saved); inserted.push(saved);
       }
       const afterInsert = this.afterNextTaskInsert;
@@ -162,7 +171,7 @@ export class MockBackend {
       }
       const rows = this.tasks.filter(matches);
       if (method === 'PATCH') {
-        for (const row of rows) Object.assign(row, structuredClone(body));
+        for (const row of rows) Object.assign(row, structuredClone(body), {updated_at: this.timestamp()});
         return result(rows);
       }
       this.tasks = this.tasks.filter(row => !matches(row));

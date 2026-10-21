@@ -22,6 +22,7 @@ import {
 } from "./domain";
 import { readLocal, writeLocal } from "./storage";
 import { weeklyDailyRow } from "./weekly";
+import { startAutoSync } from "./sync";
 import type {
   Task,
   TaskInput,
@@ -57,6 +58,7 @@ export function useWorkspace(user: User) {
     readVersion = useRef(0),
     readBusy = useRef(false),
     deleting = useRef(new Set<string>());
+  const initialized = useRef(false), metadataReadAt = useRef(0);
   const mergeTasks = (rows: Task[]) =>
     setTasks((prev) =>
       sortTasks([
@@ -102,24 +104,29 @@ export function useWorkspace(user: User) {
     chain.current = job;
     return job;
   }, []);
-  const refresh = useCallback(async () => {
-    if (readBusy.current || mutating.current) return;
+  const refresh = useCallback(async (full = true): Promise<boolean | void> => {
+    if (readBusy.current || mutating.current || !navigator.onLine) return;
     readBusy.current = true;
     const version = ++readVersion.current;
+    const readMetadata = full || !initialized.current || Date.now() - metadataReadAt.current >= 300_000;
     try {
       const [rows, meta] = await Promise.all([
-        api.list(userId),
-        api.metadata(userId),
+        full || !initialized.current ? api.list(userId) : api.sync(userId, state.current.tasks),
+        readMetadata ? api.metadata(userId) : Promise.resolve(null),
       ]);
       if (alive.current && readVersion.current === version) {
         setTasks(sortTasks(rows));
-        setMetadata(meta);
+        state.current.tasks = rows;
+        if (meta) { setMetadata(meta); state.current.metadata = meta; metadataReadAt.current = Date.now(); }
+        initialized.current = true;
         setReady(true);
         setError(null);
         setLastSaved(new Date().toISOString());
       }
+      return true;
     } catch (e) {
-      if (alive.current) setError(e instanceof Error ? e.message : "同步失败");
+      if (alive.current && readVersion.current === version) setError(e instanceof Error ? e.message : "同步失败");
+      return false;
     } finally {
       readBusy.current = false;
       if (alive.current) setLoading(false);
@@ -128,22 +135,16 @@ export function useWorkspace(user: User) {
   useEffect(() => {
     alive.current = true;
     void refresh();
-    const wake = () => {
-      setOnline(navigator.onLine);
-      if (document.visibilityState === "visible") void refresh();
-    };
-    const interval = setInterval(wake, 60000);
-    window.addEventListener("focus", wake);
-    window.addEventListener("online", wake);
-    window.addEventListener("offline", wake);
-    document.addEventListener("visibilitychange", wake);
+    const stopSync = startAutoSync(() => refresh(false));
+    const connection = () => setOnline(navigator.onLine);
+    window.addEventListener("online", connection);
+    window.addEventListener("offline", connection);
     return () => {
       alive.current = false;
-      clearInterval(interval);
-      window.removeEventListener("focus", wake);
-      window.removeEventListener("online", wake);
-      window.removeEventListener("offline", wake);
-      document.removeEventListener("visibilitychange", wake);
+      readVersion.current++;
+      stopSync();
+      window.removeEventListener("online", connection);
+      window.removeEventListener("offline", connection);
     };
   }, [refresh]);
   useEffect(() => {
@@ -259,12 +260,11 @@ export function useWorkspace(user: User) {
       setTasks(sortTasks(optimistic));
       return transact(async () => {
         try {
-          await api.reorder(
+          const saved = await api.reorder(
             userId,
             ids.map((id) => ({ id, sort_order: order.get(id)! })),
           );
-          const rows = await api.list(userId);
-          setTasks(sortTasks(rows));
+          mergeTasks(saved);
         } catch (error) {
           const rows = await api.list(userId).catch(() => previous);
           setTasks(sortTasks(rows));
@@ -349,7 +349,7 @@ export function useWorkspace(user: User) {
           const id = repeatId(rule.id, day);
           if (cancelled.has(id)) await api.remove(userId, id);
         }
-        const rows = await api.list(userId);
+        const rows = await api.sync(userId, state.current.tasks);
         setTasks(sortTasks(rows));
       }),
     [userId, transact],

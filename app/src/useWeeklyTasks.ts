@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { weeklyApi } from "./weeklyApi";
 import { sortWeeklyTasks, validWeeklyInput } from "./weekly";
 import { readLocal, writeLocal } from "./storage";
+import { startAutoSync } from "./sync";
 import type { WeeklyTask, WeeklyTaskInput } from "./types";
 
 export function useWeeklyTasks(userId: string, week: string) {
@@ -11,37 +12,43 @@ export function useWeeklyTasks(userId: string, week: string) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const version = useRef(0), alive = useRef(true), writing = useRef(false);
+  const currentRows = useRef<WeeklyTask[]>([]), initialized = useRef(false);
+  const reading = useRef<symbol | null>(null);
+  currentRows.current = rows;
   const activeWeek = useRef(week);
   activeWeek.current = week;
   const draftKey = `dtl:weekly-draft:v1:${userId}`;
   const draft = useRef<{ signature: string; row: WeeklyTask } | null>(readLocal(draftKey, null));
-  const refresh = useCallback(async () => {
-    if (writing.current) return;
+  const refresh = useCallback(async (full = true): Promise<boolean | void> => {
+    if (writing.current || reading.current || !navigator.onLine) return;
+    const token = Symbol();
+    reading.current = token;
     const request = ++version.current;
     try {
-      const data = await weeklyApi.list(userId, week);
-      if (alive.current && version.current === request) {
+      const data = full || !initialized.current ? await weeklyApi.list(userId, week) : await weeklyApi.sync(userId, week, currentRows.current);
+      if (alive.current && version.current === request && activeWeek.current === week) {
+        currentRows.current = data;
+        initialized.current = true;
         setRows(sortWeeklyTasks(data)); setReady(true); setError("");
       }
+      return true;
     } catch (e) {
       if (alive.current && version.current === request) setError(e instanceof Error ? e.message : "周计划同步失败，请重试");
+      return false;
     } finally {
+      if (reading.current === token) reading.current = null;
       if (alive.current && version.current === request) setLoading(false);
     }
   }, [userId, week]);
   useEffect(() => {
     alive.current = true;
+    initialized.current = false; reading.current = null; currentRows.current = [];
     setRows([]); setReady(false); setLoading(true); setError("");
     void refresh();
-    const wake = () => { if (document.visibilityState === "visible") void refresh(); };
-    const interval = setInterval(wake, 60000);
-    window.addEventListener("focus", wake); window.addEventListener("online", wake);
-    document.addEventListener("visibilitychange", wake);
+    const stopSync = startAutoSync(() => refresh(false));
     return () => {
       alive.current = false; version.current++;
-      clearInterval(interval);
-      window.removeEventListener("focus", wake); window.removeEventListener("online", wake);
-      document.removeEventListener("visibilitychange", wake);
+      stopSync();
     };
   }, [refresh]);
   const run = async <T,>(job: () => Promise<T>): Promise<T> => {

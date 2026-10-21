@@ -159,7 +159,7 @@ const tree = await request("git/trees", "POST", {
   tree: changes,
 });
 const commit = await request("git/commits", "POST", {
-  message: "feat: add weekly planning alongside daily tasks",
+  message: "perf: reduce idle and background synchronization bandwidth",
   tree: tree.sha,
   parents: [head],
 });

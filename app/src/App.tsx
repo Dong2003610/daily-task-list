@@ -181,6 +181,7 @@ export function App({ user }: { user: User }) {
   };
   useEffect(() => {
     const check = () => {
+      if (document.visibilityState !== "visible") return;
       setDay(dayKey());
       setRetryTick((n) => n + 1);
     };
@@ -208,6 +209,7 @@ export function App({ user }: { user: User }) {
     if (
       !workspace.ready ||
       !workspace.online ||
+      document.visibilityState !== "visible" ||
       generated.current === key ||
       generateLock.current
     )

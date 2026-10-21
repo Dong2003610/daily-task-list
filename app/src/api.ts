@@ -1,5 +1,6 @@
 import { supabase, url, anon } from "./client";
 import type { Task, Metadata } from "./types";
+import { syncRows, type RowVersion } from "./sync";
 const fields =
   "id,user_id,name,priority,completed,reminder_at,reminder_method,elapsed_seconds,completed_at,created_at,sort_order,updated_at";
 export function fail(error: unknown): never {
@@ -10,6 +11,25 @@ export function fail(error: unknown): never {
   throw new Error(message);
 }
 export const api = {
+  async sync(userId: string, previous: Task[]): Promise<Task[]> {
+    return syncRows(previous, async () => {
+      const versions: RowVersion[] = [];
+      let cursor = "";
+      for (;;) {
+        let query = supabase.from("tasks").select("id,updated_at").eq("user_id", userId).order("id").limit(500);
+        if (cursor) query = query.gt("id", cursor);
+        const { data, error } = await query;
+        if (error) fail(error);
+        versions.push(...(data || []));
+        if (!data || data.length < 500) return versions;
+        cursor = data[data.length - 1].id;
+      }
+    }, async (ids) => {
+      const { data, error } = await supabase.from("tasks").select(fields).eq("user_id", userId).in("id", ids);
+      if (error) fail(error);
+      return (data || []) as Task[];
+    });
+  },
   async get(userId: string, id: string): Promise<Task> {
     const { data, error } = await supabase
       .from("tasks")

@@ -425,6 +425,7 @@ export function App({ user }: { user: User }) {
           </button>
         </div>
       </header>
+      {reminders.desktop && <div className="panel" style={{ padding: '10px 16px', marginBottom: 12, fontSize: 13 }} role="status">任务提醒由桌宠接收，请保持桌宠运行。<button className="text-button" onClick={() => { void reminders.useWeb().catch((error) => setActionError(error instanceof Error ? error.message : '切换失败，请重试。')); }}>改由网页提醒</button></div>}
       {(workspace.error || actionError || timer.error) && (
         <div className="error-box error-banner" role="alert">
           <span>{actionError || timer.error || workspace.error}</span>

@@ -159,7 +159,7 @@ const tree = await request("git/trees", "POST", {
   tree: changes,
 });
 const commit = await request("git/commits", "POST", {
-  message: "perf: reduce idle and background synchronization bandwidth",
+  message: process.env.PUBLISH_MESSAGE || "perf: reduce idle and background synchronization bandwidth",
   tree: tree.sha,
   parents: [head],
 });

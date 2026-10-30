@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { dueReminders, reminderKey } from "./domain";
 import type { Task } from "./types";
+import { api } from './api';
+import { reminderOwner } from './companionBridge';
 
 interface ReminderView {
   userId: string;
   pending: Task[];
+  desktop?: boolean;
 }
 
 function isStoredReminder(value: unknown, userId: string): value is Task {
@@ -38,6 +41,12 @@ function createReminders(userId: string) {
   let context: AudioContext | null = null;
   let unlocking: Promise<void> | null = null;
   let connected = false;
+  let desktop = false;
+  let scanning = false;
+  let ownerReadAt = -Infinity;
+  let ownerAttemptAt = -Infinity;
+  let ownerRevision = 0;
+  const checkedOccurrences = new Set<string>();
 
   function readStorage() {
     if (!userId) return;
@@ -87,7 +96,8 @@ function createReminders(userId: string) {
     persist();
     listener?.({
       userId,
-      pending: [...queue.values()].sort(
+      desktop,
+      pending: (desktop ? [] : [...queue.values()]).sort(
         (a, b) =>
           Date.parse(a.reminder_at!) - Date.parse(b.reminder_at!) ||
           reminderKey(a).localeCompare(reminderKey(b)),
@@ -121,6 +131,7 @@ function createReminders(userId: string) {
   }
 
   function announce() {
+    if (desktop) return;
     const waiting = [...queue].filter(
       ([key, task]) => task.reminder_method === "sound" && !sounded.has(key),
     );
@@ -173,10 +184,29 @@ function createReminders(userId: string) {
     }
   }
 
-  function scan() {
-    if (!connected || !userId) return;
+  async function scan() {
+    if (!connected || !userId || scanning || document.visibilityState !== 'visible' || !navigator.onLine) return;
+    scanning = true;
+    try {
     readStorage();
     const ownTasks = tasks.filter((t) => t.user_id === userId);
+    const due = dueReminders(ownTasks, new Set([...dismissed, ...queue.keys()]));
+    // Idle scans reuse ownership for five minutes. A newly due occurrence
+    // checks the current receiver before delivery, even inside that interval.
+    const unchecked = due.some((task) => !checkedOccurrences.has(reminderKey(task)));
+    if (Date.now() - ownerReadAt >= 300_000 || unchecked) {
+      if (Date.now() - ownerAttemptAt < 5_000) return;
+      ownerAttemptAt = Date.now();
+      const revision = ownerRevision;
+      const metadata = await api.metadata(userId);
+      if (revision !== ownerRevision) return;
+      desktop = reminderOwner(metadata) === 'desktop';
+      ownerReadAt = Date.now();
+      ownerAttemptAt = -Infinity;
+      for (const task of due) checkedOccurrences.add(reminderKey(task));
+    }
+    if (!connected || document.visibilityState !== 'visible' || !navigator.onLine) return;
+    if (desktop) { publish(); return; }
     // Preserve a queued occurrence's original timestamp if a task is rescheduled.
     // Completion/deletion prevents new reminders but does not dismiss an existing one.
     for (const task of ownTasks) {
@@ -188,6 +218,11 @@ function createReminders(userId: string) {
       queue.set(reminderKey(task), { ...task });
     publish();
     announce();
+    } catch {
+      // An unknown receiver must not produce duplicate notifications.
+    } finally {
+      scanning = false;
+    }
   }
 
   function connect(nextTasks: Task[], onChange: (view: ReminderView) => void) {
@@ -205,6 +240,7 @@ function createReminders(userId: string) {
     const interval = window.setInterval(scan, 30_000);
     window.addEventListener("focus", scan);
     window.addEventListener("pageshow", scan);
+    window.addEventListener("online", scan);
     window.addEventListener("load", scan);
     window.addEventListener("storage", storage);
     document.addEventListener("visibilitychange", visibility);
@@ -217,6 +253,7 @@ function createReminders(userId: string) {
       window.clearInterval(interval);
       window.removeEventListener("focus", scan);
       window.removeEventListener("pageshow", scan);
+      window.removeEventListener("online", scan);
       window.removeEventListener("load", scan);
       window.removeEventListener("storage", storage);
       document.removeEventListener("visibilitychange", visibility);
@@ -253,6 +290,16 @@ function createReminders(userId: string) {
       publish();
     },
     playSound: () => unlock(true),
+    useWeb: async () => {
+      await api.patchMetadata(userId, { dtl_reminder_owner_v1: 'web' });
+      ownerRevision++;
+      desktop = false;
+      ownerReadAt = Date.now();
+      // The explicit account update already confirms ownership.
+      for (const task of tasks) checkedOccurrences.add(reminderKey(task));
+      publish();
+      void scan();
+    },
   };
 }
 
@@ -274,6 +321,8 @@ export function useReminders(userId: string, tasks: Task[]) {
   useEffect(() => reminders.update(tasks), [reminders, tasks]);
   return {
     pending: snapshot.userId === userId ? snapshot.pending : [],
+    desktop: snapshot.userId === userId && Boolean(snapshot.desktop),
+    useWeb: reminders.useWeb,
     dismiss: reminders.dismiss,
     playSound: reminders.playSound,
   };

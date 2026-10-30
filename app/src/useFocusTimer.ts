@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Task, TimerMode } from "./types";
+import { createFocusBridge } from './companionBridge';
 
 type SaveElapsed = (id: string, seconds: number) => Promise<void>;
 interface Session {
@@ -67,6 +68,10 @@ function advance(session: Session, progress: Progress, now: number): boolean {
 }
 
 function createTimer(userId: string) {
+  const bridge = createFocusBridge(userId);
+  let claiming = false;
+  let leasePending = false;
+  let actionEpoch = 0;
   const storageKey = `dtl_focus_timer_v1:${encodeURIComponent(userId)}`;
   const progress = new Map<string, Progress>();
   const inFlight = new Map<string, number>();
@@ -195,7 +200,9 @@ function createTimer(userId: string) {
 
   function checkpoint(now = Date.now()) {
     if (!session) return false;
-    return advance(session, progress.get(session.taskId)!, now);
+    const finished = advance(session, progress.get(session.taskId)!, now);
+    if (finished && userId) void bridge.release().catch(() => {});
+    return finished;
   }
 
   function save(id: string) {
@@ -245,10 +252,12 @@ function createTimer(userId: string) {
   }
 
   function pause() {
+    actionEpoch++;
     checkpoint();
     if (session) session.startedAt = null;
     publish();
     flush();
+    if (userId) void bridge.release().catch(() => {});
   }
 
   function update(nextTasks: Task[], writer: SaveElapsed) {
@@ -294,6 +303,15 @@ function createTimer(userId: string) {
     const retry = window.setInterval(() => {
       checkpoint();
       flush();
+      if (session?.startedAt != null && !leasePending) {
+        leasePending = true;
+        const id = session.taskId;
+        const epoch = actionEpoch;
+        void bridge.claim({ taskId: id, name: tasks.get(id)?.name, seconds: view().elapsed, remaining: view().remaining }).catch((error) => {
+          if (!connected || actionEpoch !== epoch || session?.taskId !== id || session.startedAt == null) return;
+          pause(); actionError = error instanceof Error ? error.message : '专注连接中断，已暂停。'; publish();
+        }).finally(() => { leasePending = false; });
+      }
     }, SAVE_INTERVAL);
     const catchUp = () => {
       checkpoint();
@@ -322,6 +340,8 @@ function createTimer(userId: string) {
       document.removeEventListener("visibilitychange", visibility);
       connected = false;
       listener = null;
+      actionEpoch++;
+      void bridge.release().catch(() => {});
       checkpoint();
       if (session) session.startedAt = null;
       backup();
@@ -329,8 +349,8 @@ function createTimer(userId: string) {
     };
   }
 
-  function start(task: Task, mode: TimerMode, minutes = 25) {
-    if (!connected) return;
+  async function start(task: Task, mode: TimerMode, minutes = 25) {
+    if (!connected || claiming) return;
     const current = tasks.get(task.id);
     if (!userId || task.user_id !== userId || !current || current.completed) {
       actionError = "任务已完成或暂不可用，无法开始计时。";
@@ -349,6 +369,11 @@ function createTimer(userId: string) {
       return;
     }
     pause();
+    const epoch = actionEpoch; claiming = true;
+    try { await bridge.claim({ taskId: task.id, name: task.name, seconds: remoteSeconds(current), remaining: mode === 'countdown' ? Math.round(minutes * 60) : 0 }); }
+    catch (error) { actionError = error instanceof Error ? error.message : '暂时无法连接专注服务，请重试。'; publish(); return; }
+    finally { claiming = false; }
+    if (!connected || actionEpoch !== epoch || tasks.get(task.id)?.completed) { void bridge.release().catch(() => {}); return; }
     if (!progress.has(task.id)) {
       const total = remoteSeconds(current);
       progress.set(task.id, { totalMs: total * 1000, savedSeconds: total });
@@ -366,8 +391,8 @@ function createTimer(userId: string) {
     publish();
   }
 
-  function resume() {
-    if (!connected || !session || session.startedAt !== null) return;
+  async function resume() {
+    if (!connected || !session || session.startedAt !== null || claiming) return;
     const task = tasks.get(session.taskId);
     if (!task || task.completed) {
       actionError = "任务已完成或暂不可用，计时保持暂停。";
@@ -379,6 +404,11 @@ function createTimer(userId: string) {
       session.elapsedMs >= session.duration * 1000
     )
       return;
+    const epoch = actionEpoch; claiming = true;
+    try { await bridge.claim({ taskId: task.id, name: task.name, seconds: view().elapsed, remaining: view().remaining }); }
+    catch (error) { actionError = error instanceof Error ? error.message : '暂时无法连接专注服务，请重试。'; publish(); return; }
+    finally { claiming = false; }
+    if (!connected || actionEpoch !== epoch || !session || tasks.get(task.id)?.completed) { void bridge.release().catch(() => {}); return; }
     reconcile(session.taskId);
     session.startedAt = Date.now();
     actionError = null;
